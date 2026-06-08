@@ -23,6 +23,7 @@ select name, city, state from stores;
 -- Q7) From orders, show order_id, status, and a computed column total_items
 --     that counts how many items are in each order.
 select orders.order_id, orders.status, sum(quantity) as total_items from orders join order_items on orders.order_id = order_items.order_id group by orders.order_id, orders.status;
+
 -- This took me almost an hour of googling to figure it out. Finally got it right. :)
 
 
