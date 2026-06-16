@@ -13,21 +13,108 @@ USE coffeeshop_db;
 -- Q1) Correlated subquery: Above-average order totals (PAID only)
 -- =========================================================
 -- For each PAID order, compute order_total (= SUM(quantity * products.price)).
+select o.order_id, sum(OI.quantity * p.price) as order_total from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+where status in (select status from products as p where status ='paid')
+group by order_id;
+
 -- Return: order_id, customer_name, store_name, order_datetime, order_total.
+select o.order_id, c.first_name, c.last_name, s.name as store_name, o.order_datetime, sum(OI.quantity * p.price) as order_total 
+from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join customers as c on c.customer_id = o.customer_id
+join stores as s on s.store_id = o.store_id
+where status in (select status from products as p where status ='paid')
+group by order_id; 
 -- Filter to orders where order_total is greater than the average PAID order_total
+
+select o.order_id, c.first_name, c.last_name, s.name as store_name, o.order_datetime, sum(OI.quantity * p.price) as order_total 
+from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join customers as c on c.customer_id = o.customer_id
+join stores as s on s.store_id = o.store_id
+where status in (select status from products as p where status ='paid')
+group by order_id 
+having sum(OI.quantity * p.price) > (select avg(avg_paid_order_total.order_total) from (select o.order_id, sum(OI.quantity * p.price) as order_total 
+from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join customers as c on c.customer_id = o.customer_id
+join stores as s on s.store_id = o.store_id
+where status in (select status from products as p where status ='paid')
+group by order_id) as avg_paid_order_total);
+ 
 -- for THAT SAME store (correlated subquery).
 -- Sort by store_name, then order_total DESC.
+select o.order_id, c.first_name, c.last_name, s.name as store_name, o.order_datetime, sum(OI.quantity * p.price) as order_total 
+from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join customers as c on c.customer_id = o.customer_id
+join stores as s on s.store_id = o.store_id
+where status in (select status from products as p where status ='paid')
+group by order_id
+having sum(OI.quantity * p.price) > (select avg(avg_paid_order_total.order_total) from (select o.order_id, sum(OI.quantity * p.price) as order_total 
+from Order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join customers as c on c.customer_id = o.customer_id
+join stores as s on s.store_id = o.store_id
+where status in (select status from products as p where status ='paid')
+group by order_id) as avg_paid_order_total)
+order by store_name, order_total desc;
+
 
 -- =========================================================
 -- Q2) CTE: Daily revenue and 3-day rolling average (PAID only)
 -- =========================================================
 -- Using a CTE, compute daily revenue per store:
 --   revenue_day = SUM(quantity * products.price) grouped by store_id and DATE(order_datetime).
+
+With
+daily_revenue as 
+(select o.order_id, date(o.order_datetime), sum(OI.quantity * p.price) as revenue_day, s.store_id from order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join stores as s on s.store_id = o.store_id
+where o.status = 'paid'
+group by o.order_id, date(o.order_datetime))
+Select * from daily_revenue;
+
 -- Then, for each store and date, return:
 --   store_name, order_date, revenue_day,
+
+With
+daily_revenue as (
+select date(o.order_datetime) as order_date, sum(OI.quantity * p.price) as revenue_day, s.name as store_name from order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join stores as s on s.store_id = o.store_id
+where o.status = 'paid'
+group by o.order_id, date(o.order_datetime))
+Select * from daily_revenue;
+
+
 --   rolling_3day_avg = average of revenue_day over the current day and the prior 2 days.
 -- Use a window function for the rolling average.
 -- Sort by store_name, order_date.
+with 
+daily_revenue as (
+select date(o.order_datetime) as order_date, sum(OI.quantity * p.price) as revenue_day, s.name as store_name from order_items as OI
+join products as p on p.product_id = OI.product_id
+join orders as o on o.order_id = OI.order_id
+join stores as s on s.store_id = o.store_id
+where o.status = 'paid'
+group by o.order_id, date(o.order_datetime))
+
+
+select store_name, order_date, revenue_day, avg(revenue_day) over (partition by store_name order by order_date rows between 2 preceding and current row) as rolling_3day_avg
+from daily_revenue order by store_name, order_date;
+
+
 
 -- =========================================================
 -- Q3) Window function: Rank customers by lifetime spend (PAID only)
@@ -35,6 +122,20 @@ USE coffeeshop_db;
 -- Compute each customer's total spend across ALL stores (PAID only).
 -- Return: customer_id, customer_name, total_spend,
 --         spend_rank (DENSE_RANK by total_spend DESC).
+select o.customer_id, c.first_name, c.last_name, s.store_id, sum(OI.quantity * p.price) as total_spend,
+dense_rank () over (order by sum(OI.quantity * p.price) desc)
+as spend_rank from orders as o
+join stores as s on s.store_id = o.store_id
+join order_items as OI on OI.order_id = o.order_id
+join products as p on p.product_id = OI.product_id
+join customers as c on o.customer_id = c.customer_id
+where status = 'paid'
+group by o.customer_id, c.first_name, c.last_name, s.store_id;
+
+
+
+ sum(OI.quantity * p.price), dense_rank () over (partition by store order by s.store_id) from customers as c) as total_spend;
+
 -- Also include percent_of_total = customer's total_spend / total spend of all customers.
 -- Sort by total_spend DESC.
 
